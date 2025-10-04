@@ -26,6 +26,15 @@ func (rf *Raft) getLastLog() (int, int) {
 	return index, term
 }
 
+func (rf *Raft) findLastIndexOfTerm(term int) int {
+	for i := len(rf.logs) - 1; i >= 0; i-- {
+		if rf.logs[i].Term == term {
+			return rf.logs[i].Index
+		}
+	}
+	return -1
+}
+
 func min(a int, b int) int {
 	if a < b {
 		return a

@@ -16,6 +16,9 @@ type AppendEnrtiesRequest struct {
 type AppendEnrtiesResponse struct {
 	Term    int
 	Success bool
+	XTerm   int
+	XIndex  int
+	Xlen    int
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEnrtiesRequest, reply *AppendEnrtiesResponse) bool {
@@ -97,6 +100,16 @@ func (rf *Raft) requestAppendEntries() {
 					rf.mu.Unlock()
 					return
 				} else {
+					if reply.XTerm == -1 {
+						rf.nextIndex[peerId] = reply.XIndex
+					} else {
+						lastIndexOfXTerm := rf.findLastIndexOfTerm(reply.XTerm)
+						if lastIndexOfXTerm == -1 {
+							rf.nextIndex[peerId] = reply.XIndex
+						} else {
+							rf.nextIndex[peerId] = lastIndexOfXTerm + 1
+						}
+					}
 					rf.nextIndex[peerId]--
 					rf.mu.Unlock()
 				}
@@ -113,6 +126,9 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 
 	reply.Success = false
 	reply.Term = rf.currentTerm
+	reply.XTerm = -1
+	reply.XIndex = -1
+	reply.Xlen = -1
 
 	if args.Term < rf.currentTerm {
 		return
@@ -129,10 +145,18 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 	lastLogIndex, _ := rf.getLastLog()
 
 	if lastLogIndex < args.PrevLogIndex {
+		reply.XIndex = lastLogIndex + 1
 		return
 	}
 
 	if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.XTerm = rf.logs[args.PrevLogIndex].Term
+		for i := args.PrevLogIndex; i > 0; i-- {
+			if rf.logs[i].Term != reply.XTerm {
+				reply.XIndex = rf.logs[i].Index
+				break
+			}
+		}
 		return
 	}
 

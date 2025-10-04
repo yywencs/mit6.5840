@@ -279,6 +279,7 @@ func TestFailAgree3B(t *testing.T) {
 
 	// disconnect one follower from the network.
 	leader := cfg.checkOneLeader()
+
 	cfg.disconnect((leader + 1) % servers)
 
 	// the leader and remaining follower should be
