@@ -2,28 +2,22 @@ package raft
 
 import (
 	"sort"
+	"time"
 )
 
-type AppendEnrtiesRequest struct {
-	Term         int
-	LeaderID     int
-	PrevLogIndex int
-	PrevLogTerm  int
-	Entries      []LogEntry
-	LeaderCommit int
-}
-
-type AppendEnrtiesResponse struct {
-	Term    int
-	Success bool
-	XTerm   int
-	XIndex  int
-	Xlen    int
-}
-
 func (rf *Raft) sendAppendEntries(server int, args *AppendEnrtiesRequest, reply *AppendEnrtiesResponse) bool {
-	ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-	return ok
+	done := make(chan bool, 1)
+
+	go func() {
+		done <- rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
+	}()
+
+	select {
+	case ok := <-done:
+		return ok
+	case <-time.After(RPC_TIMEOUT): // 例如100ms
+		return false
+	}
 }
 
 func (rf *Raft) requestAppendEntries() {
@@ -50,9 +44,10 @@ func (rf *Raft) requestAppendEntries() {
 				lastLogIndex, _ := rf.getLastLog()
 				containEntries := lastLogIndex >= next
 
-				entries := []LogEntry{}
+				entries := make([]LogEntry, len(rf.logs[next:]))
 				if containEntries {
-					entries = rf.logs[next:]
+					copy(entries, rf.logs[next:])
+					// entries = rf.logs[next:]
 				}
 				prevLogIndex := next - 1
 				prevLogTerm := rf.logs[next-1].Term
@@ -65,6 +60,7 @@ func (rf *Raft) requestAppendEntries() {
 				}
 
 				rf.mu.Lock()
+				DPrintf("%v Send AppendEntries to S%d\n", rf, peerId)
 
 				if args.Term != rf.currentTerm {
 					rf.mu.Unlock()
@@ -76,6 +72,7 @@ func (rf *Raft) requestAppendEntries() {
 				if reply.Term > rf.currentTerm {
 					rf.changeState(Follower)
 					rf.currentTerm = reply.Term
+					rf.persist()
 					rf.mu.Unlock()
 					return
 				}
@@ -130,17 +127,25 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 	reply.XIndex = -1
 	reply.Xlen = -1
 
+	if len(args.Entries) > 0 {
+		DPrintf("%v received AppendEntries from S%d (term=%d, prevLogIndex=%d, prevLogTerm=%d, entries=%d)",
+			rf, args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
+	}
+
 	if args.Term < rf.currentTerm {
 		return
 	}
-
-	rf.resetElectionTimer()
+	if args.Term == rf.currentTerm && rf.state == Candidate {
+		rf.changeState(Follower)
+	}
 
 	if args.Term > rf.currentTerm {
 		rf.changeState(Follower)
 		rf.currentTerm = args.Term
+		rf.persist()
 		reply.Term = rf.currentTerm
 	}
+	rf.resetElectionTimer()
 
 	lastLogIndex, _ := rf.getLastLog()
 
@@ -169,16 +174,20 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 			j += 1
 		}
 		rf.logs = append(rf.logs[:i], args.Entries[j:]...)
+		rf.persist()
 
-		// DPrintf("after append: Follower: %d, logs is %v", rf.me, rf.logs)
+		DPrintf("%v appends log entries: %+v", rf, args.Entries[j:])
 	}
 
 	reply.Success = true
 
-	newCommitIndex := min(args.LeaderCommit, rf.logs[len(rf.logs)-1].Index)
+	newCommitIndex := min(args.LeaderCommit, len(rf.logs)-1)
 	if newCommitIndex > rf.commitIndex {
 		// DPrintf("Follower %d: newCommitIndex: %d; oldCommitIndex: %d; lastApplied: %d\n", rf.me, newCommitIndex, rf.commitIndex, rf.lastApplied)
 		rf.commitIndex = newCommitIndex
+		// state := [3]string{"Leader", "Follower", "Candidate"}
+		// fmt.Printf("[S%d | term=%d | state=%s | logLen=%d | commit=%d | lastApplied=%d] | lastLogIndex=%d\n",
+		// 	rf.me, rf.currentTerm, state[rf.state], len(rf.logs), rf.commitIndex, rf.lastApplied, rf.logs[len(rf.logs)-1].Index)
 		rf.applyCond.Signal()
 	}
 
@@ -188,12 +197,21 @@ func (rf *Raft) applySubmit() {
 
 	for !rf.killed() {
 		rf.mu.Lock()
-		for rf.commitIndex <= rf.lastApplied {
+		for rf.commitIndex <= rf.lastApplied && !rf.killed() {
 			rf.applyCond.Wait()
 		}
 		applyMsgs := []ApplyMsg{}
-		// DPrintf("entry submit")
-		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
+
+		lastIdx := len(rf.logs) - 1
+		commitIdx := rf.commitIndex
+
+		if commitIdx > lastIdx {
+			commitIdx = lastIdx
+		}
+
+		DPrintf("%v updates commitIndex=%d (before=%d)", rf, commitIdx, rf.lastApplied)
+
+		for i := rf.lastApplied + 1; i <= commitIdx; i++ {
 			entry := rf.logs[i]
 			applyMsg := ApplyMsg{
 				CommandValid: true,
@@ -203,13 +221,13 @@ func (rf *Raft) applySubmit() {
 			applyMsgs = append(applyMsgs, applyMsg)
 			rf.lastApplied += 1
 		}
-		// DPrintf("no: %d; isLeader: %t; submit success, commmitIndex: %d, lastApplied: %d\n", rf.me, rf.state == Leader, rf.commitIndex, rf.lastApplied)
-		// fmt.Println(rf.logs)
+
+		DPrintf("%v applies log up to index=%d", rf, rf.lastApplied)
 
 		rf.mu.Unlock()
 
-		for _, applyMsg := range applyMsgs {
-			rf.applyCh <- applyMsg
+		for _, msg := range applyMsgs {
+			rf.applyCh <- msg
 		}
 	}
 

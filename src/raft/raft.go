@@ -20,11 +20,13 @@ package raft
 import (
 	//	"bytes"
 
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	//	"6.5840/labgob"
+	"6.5840/labgob"
 	"6.5840/labrpc"
 )
 
@@ -58,6 +60,7 @@ const (
 )
 
 const HeartBeatTime = time.Duration(50) * time.Millisecond
+const RPC_TIMEOUT = time.Duration(100) * time.Millisecond
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
@@ -126,12 +129,13 @@ func (rf *Raft) reinitIndex() {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// raftstate := w.Bytes()
-	// rf.persister.Save(raftstate, nil)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.voteFor)
+	e.Encode(rf.logs)
+	raftstate := w.Bytes()
+	rf.persister.Save(raftstate, nil)
 }
 
 // restore previously persisted state.
@@ -141,17 +145,21 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (3C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var term int
+	var voteFor int
+	var logs []LogEntry
+	if d.Decode(&term) != nil ||
+		d.Decode(&voteFor) != nil ||
+		d.Decode(&logs) != nil {
+	} else {
+		rf.mu.Lock()
+		rf.currentTerm = term
+		rf.voteFor = voteFor
+		rf.logs = logs
+		rf.mu.Unlock()
+	}
 }
 
 // the service says it has created a snapshot that has
@@ -191,6 +199,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index++
 	term = rf.currentTerm
 	rf.logs = append(rf.logs, LogEntry{Index: index, Term: term, Command: command})
+	rf.persist()
 
 	rf.matchIndex[rf.me] = index
 	rf.nextIndex[rf.me] = index + 1
@@ -228,6 +237,7 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) ticker() {
+	LogToFile()
 	for rf.killed() == false {
 
 		// Your code here (3A)

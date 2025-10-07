@@ -539,7 +539,7 @@ func TestBackup3B(t *testing.T) {
 		cfg.rafts[leader1].Start(rand.Int() % 20)
 	}
 
-	DPrintf("finish 541 \n")
+	// fmt.Printf("finish 541 \n")
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -556,7 +556,7 @@ func TestBackup3B(t *testing.T) {
 		cfg.one(rand.Int()%20, 3, true)
 	}
 
-	DPrintf("finish 558 \n")
+	// fmt.Printf("finish 558 \n")
 
 	// now another partitioned leader and one follower
 	leader2 := cfg.checkOneLeader()
@@ -571,7 +571,8 @@ func TestBackup3B(t *testing.T) {
 		cfg.rafts[leader2].Start(rand.Int() % 20)
 	}
 
-	DPrintf("finish 573 \n")
+	// fmt.Printf("finish 573 \n")
+	// fmt.Printf("Leader1 is S%d\n", leader1)
 
 	time.Sleep(RaftElectionTimeout / 2)
 
@@ -592,7 +593,7 @@ func TestBackup3B(t *testing.T) {
 		cfg.one(rand.Int()%20, 3, true)
 	}
 
-	DPrintf("finish 590 \n")
+	fmt.Println("finish 590")
 
 	// now everyone
 	for i := 0; i < servers; i++ {

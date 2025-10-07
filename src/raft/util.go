@@ -1,18 +1,45 @@
 package raft
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"time"
 )
 
 // Debugging
 const Debug = true
 
+func LogToFile() {
+	logFile := "debug.log"
+	// 检查文件是否存在
+	if _, err := os.Stat(logFile); err == nil {
+		// 文件存在则删除
+		os.Remove(logFile)
+	}
+
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalf("failed to open log file: %v", err)
+	}
+
+	// 将标准 logger 的输出重定向到文件
+	log.SetOutput(f)
+}
+
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
 		log.Printf(format, a...)
 	}
+}
+
+func (rf *Raft) String() string {
+	state := [3]string{"Leader", "Follower", "Candidate"}
+	return fmt.Sprintf(
+		"[S%d | term=%d | state=%s | logLen=%d | commit=%d | lastApplied=%d | lastLogIndex=%d]",
+		rf.me, rf.currentTerm, state[rf.state], len(rf.logs), rf.commitIndex, rf.lastApplied, rf.logs[len(rf.logs)-1].Index,
+	)
 }
 
 func resetElectionTimeout() time.Duration {
