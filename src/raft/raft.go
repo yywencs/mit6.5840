@@ -77,7 +77,7 @@ type Raft struct {
 	heartbeatTimer  *time.Timer
 	electionTimeout *time.Timer
 	currentTerm     int
-	voteFor         int
+	votedFor        int
 	logs            []LogEntry
 	nextIndex       []int
 	matchIndex      []int
@@ -129,37 +129,43 @@ func (rf *Raft) reinitIndex() {
 func (rf *Raft) persist() {
 	// Your code here (3C).
 	// Example:
+	// DPrintf("%v begin persist\n", rf)
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
-	e.Encode(rf.voteFor)
+	e.Encode(rf.votedFor)
 	e.Encode(rf.logs)
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
+	DPrintf("%v Persist; len of log is %d\n", rf, len(rf.logs))
 }
 
 // restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
+	DPrintf("readPersist\n")
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// DPrintf("readPersist\n")
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
 	// Your code here (3C).
 	// Example:
+
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var term int
-	var voteFor int
+	var votedFor int
 	var logs []LogEntry
 	if d.Decode(&term) != nil ||
-		d.Decode(&voteFor) != nil ||
+		d.Decode(&votedFor) != nil ||
 		d.Decode(&logs) != nil {
-	} else {
-		rf.mu.Lock()
-		rf.currentTerm = term
-		rf.voteFor = voteFor
-		rf.logs = logs
-		rf.mu.Unlock()
+		return
 	}
+	DPrintf("%v load len of log is %d\n", rf, len(logs))
+	rf.currentTerm = term
+	rf.votedFor = votedFor
+	rf.logs = logs
 }
 
 // the service says it has created a snapshot that has
@@ -237,7 +243,6 @@ func (rf *Raft) killed() bool {
 }
 
 func (rf *Raft) ticker() {
-	LogToFile()
 	for rf.killed() == false {
 
 		// Your code here (3A)
@@ -305,7 +310,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		state:           Follower,
 		heartbeatTimer:  time.NewTimer(HeartBeatTime),
 		currentTerm:     0,
-		voteFor:         -1,
+		votedFor:        -1,
 		electionTimeout: time.NewTimer(resetElectionTimeout()),
 		logs:            []LogEntry{{Index: 0, Term: 0, Command: nil}},
 		nextIndex:       make([]int, len(peers)),
@@ -315,12 +320,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		applyCh:         applyCh,
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
+	rf.readPersist(persister.ReadRaftState())
 
 	// Your initialization code here (3A, 3B, 3C).
 	go rf.applySubmit()
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()

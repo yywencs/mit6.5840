@@ -2,22 +2,23 @@ package raft
 
 import (
 	"sort"
-	"time"
 )
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEnrtiesRequest, reply *AppendEnrtiesResponse) bool {
-	done := make(chan bool, 1)
+	// done := make(chan bool, 1)
 
-	go func() {
-		done <- rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-	}()
+	// go func() {
+	// 	done <- rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
+	// }()
 
-	select {
-	case ok := <-done:
-		return ok
-	case <-time.After(RPC_TIMEOUT): // 例如100ms
-		return false
-	}
+	// select {
+	// case ok := <-done:
+	// 	return ok
+	// case <-time.After(RPC_TIMEOUT): // 例如100ms
+	// 	return false
+	// }
+	ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
+	return ok
 }
 
 func (rf *Raft) requestAppendEntries() {
@@ -36,6 +37,10 @@ func (rf *Raft) requestAppendEntries() {
 
 				next := rf.nextIndex[peerId]
 
+				if next == 1 {
+					DPrintf("peerId: %d, next Index=1, match Index=%d\n", peerId, rf.matchIndex[peerId])
+				}
+
 				if next <= rf.matchIndex[peerId] {
 					rf.mu.Unlock()
 					return
@@ -47,7 +52,6 @@ func (rf *Raft) requestAppendEntries() {
 				entries := make([]LogEntry, len(rf.logs[next:]))
 				if containEntries {
 					copy(entries, rf.logs[next:])
-					// entries = rf.logs[next:]
 				}
 				prevLogIndex := next - 1
 				prevLogTerm := rf.logs[next-1].Term
@@ -60,7 +64,7 @@ func (rf *Raft) requestAppendEntries() {
 				}
 
 				rf.mu.Lock()
-				DPrintf("%v Send AppendEntries to S%d\n", rf, peerId)
+				DPrintf("%v Send AppendEntries to S%d, next is %d, entries is %v\n", rf, peerId, next, entries)
 
 				if args.Term != rf.currentTerm {
 					rf.mu.Unlock()
@@ -107,7 +111,6 @@ func (rf *Raft) requestAppendEntries() {
 							rf.nextIndex[peerId] = lastIndexOfXTerm + 1
 						}
 					}
-					rf.nextIndex[peerId]--
 					rf.mu.Unlock()
 				}
 			}
@@ -127,16 +130,21 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 	reply.XIndex = -1
 	reply.Xlen = -1
 
-	if len(args.Entries) > 0 {
-		DPrintf("%v received AppendEntries from S%d (term=%d, prevLogIndex=%d, prevLogTerm=%d, entries=%d)",
+	if len(rf.logs) == 1 {
+		DPrintf("%v received AppendEntries from S%d (term=%d, prevLogIndex=%d, prevLogTerm=%d, entries=%d)\n",
 			rf, args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
 	}
 
 	if args.Term < rf.currentTerm {
+		if len(rf.logs) == 1 {
+			DPrintf("%v received AppendEntries from S%d 137 return\n", rf, args.LeaderID)
+		}
+
 		return
 	}
 	if args.Term == rf.currentTerm && rf.state == Candidate {
 		rf.changeState(Follower)
+		rf.persist()
 	}
 
 	if args.Term > rf.currentTerm {
@@ -151,6 +159,9 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 
 	if lastLogIndex < args.PrevLogIndex {
 		reply.XIndex = lastLogIndex + 1
+		if len(rf.logs) == 1 {
+			DPrintf("%v received AppendEntries from S%d 160 return, XIndex is %d\n", rf, args.LeaderID, reply.XIndex)
+		}
 		return
 	}
 
@@ -166,17 +177,19 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 	}
 
 	if len(args.Entries) > 0 {
-		// DPrintf("Follower: %d, preIndex: %d, entries: %v, logs: %v\n", rf.me, args.PrevLogIndex, args.Entries, rf.logs)
+		// DPrintf("%v, rf.logs: %v, entries: %v\n", rf, rf.logs, args.Entries)
 
 		i, j := args.PrevLogIndex+1, 0
 		for i < len(rf.logs) && j < len(args.Entries) && rf.logs[i].Term == args.Entries[j].Term {
 			i += 1
 			j += 1
 		}
-		rf.logs = append(rf.logs[:i], args.Entries[j:]...)
-		rf.persist()
+		if j < len(args.Entries) {
+			rf.logs = append(rf.logs[:i], args.Entries[j:]...)
+			rf.persist()
+			// DPrintf("%v appends log entries: %v", rf, args.Entries[j:])
+		}
 
-		DPrintf("%v appends log entries: %+v", rf, args.Entries[j:])
 	}
 
 	reply.Success = true
@@ -202,16 +215,7 @@ func (rf *Raft) applySubmit() {
 		}
 		applyMsgs := []ApplyMsg{}
 
-		lastIdx := len(rf.logs) - 1
-		commitIdx := rf.commitIndex
-
-		if commitIdx > lastIdx {
-			commitIdx = lastIdx
-		}
-
-		DPrintf("%v updates commitIndex=%d (before=%d)", rf, commitIdx, rf.lastApplied)
-
-		for i := rf.lastApplied + 1; i <= commitIdx; i++ {
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 			entry := rf.logs[i]
 			applyMsg := ApplyMsg{
 				CommandValid: true,

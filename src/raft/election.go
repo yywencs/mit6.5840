@@ -86,8 +86,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	if rf.voteFor == -1 || rf.voteFor == args.CandidateId {
-		rf.voteFor = args.CandidateId
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		rf.votedFor = args.CandidateId
 		rf.persist()
 		reply.VoteGranted = true
 		rf.resetElectionTimer()

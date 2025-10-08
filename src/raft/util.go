@@ -9,7 +9,7 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug = false
 
 func LogToFile() {
 	logFile := "debug.log"
@@ -74,10 +74,10 @@ func (rf *Raft) changeState(state State) {
 	if state == Candidate {
 		rf.state = Candidate
 		rf.currentTerm += 1
-		rf.voteFor = rf.me
+		rf.votedFor = rf.me
 	} else if state == Follower {
 		rf.state = Follower
-		rf.voteFor = -1
+		rf.votedFor = -1
 		rf.resetElectionTimer()
 		rf.heartbeatTimer.Stop()
 
