@@ -1,11 +1,9 @@
 package raft
 
-import "time"
-
 func (rf *Raft) startElection() {
 	rf.mu.Lock()
-	rf.changeState(Candidate)
-	rf.persist()
+	rf.changeState(CANDIDATE)
+	rf.persist(nil)
 	lastLogIndex, lastLogTerm := rf.getLastLog()
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -30,54 +28,51 @@ func (rf *Raft) startElection() {
 			}
 
 			rf.mu.Lock()
+			defer rf.mu.Unlock()
 
 			if args.Term != rf.currentTerm {
-				rf.mu.Unlock()
 				return
 			}
 
 			if reply.Term > rf.currentTerm {
 				rf.currentTerm = reply.Term
-				rf.changeState(Follower)
-				rf.persist()
-				rf.mu.Unlock()
+				rf.changeState(FOLLOWER)
+				rf.persist(nil)
 				return
 			}
 
-			if reply.VoteGranted && rf.state == Candidate {
+			if reply.VoteGranted && rf.state == CANDIDATE {
 				cnt += 1
 				if cnt > nPeers/2 {
-					rf.changeState(Leader)
+					rf.changeState(LEADER)
 					rf.reinitIndex()
 					DPrintf("%v becomes LEADER", rf)
-					rf.mu.Unlock()
 					rf.requestAppendEntries()
 					return
 				}
 			}
-			rf.mu.Unlock()
-
 		}(peerId)
 	}
 }
 
 // example RequestVote RPC handler.
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (3A, 3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
+	DPrintf("S%d get RequestVote from S%d\n", rf.me, args.CandidateId)
+
 	if args.Term < rf.currentTerm {
 		return
 	}
 
 	if rf.currentTerm < args.Term {
-		rf.changeState(Follower)
+		rf.changeState(FOLLOWER)
 		rf.currentTerm = args.Term
-		rf.persist()
+		rf.persist(nil)
 		reply.Term = rf.currentTerm
 	}
 
@@ -88,7 +83,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 		rf.votedFor = args.CandidateId
-		rf.persist()
+		rf.persist(nil)
 		reply.VoteGranted = true
 		rf.resetElectionTimer()
 	}
@@ -122,17 +117,3 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 // capitalized all field names in structs passed over RPC, and
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	done := make(chan bool, 1)
-
-	go func() {
-		done <- rf.peers[server].Call("Raft.RequestVote", args, reply)
-	}()
-
-	select {
-	case ok := <-done:
-		return ok
-	case <-time.After(RPC_TIMEOUT): // 例如100ms
-		return false
-	}
-}

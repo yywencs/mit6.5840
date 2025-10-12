@@ -21,6 +21,7 @@ import (
 	//	"bytes"
 
 	"bytes"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,17 +55,16 @@ type ApplyMsg struct {
 type State int
 
 const (
-	Leader State = iota
-	Follower
-	Candidate
+	LEADER State = iota
+	FOLLOWER
+	CANDIDATE
 )
 
-const HeartBeatTime = time.Duration(50) * time.Millisecond
-const RPC_TIMEOUT = time.Duration(100) * time.Millisecond
+const HEARTBEATTIME = time.Duration(50) * time.Millisecond
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.RWMutex        // Lock to protect shared access to this peer's state
+	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -73,18 +73,20 @@ type Raft struct {
 	// Your data here (3A, 3B, 3C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
-	state           State
-	heartbeatTimer  *time.Timer
-	electionTimeout *time.Timer
-	currentTerm     int
-	votedFor        int
-	logs            []LogEntry
-	nextIndex       []int
-	matchIndex      []int
-	commitIndex     int
-	lastApplied     int
-	applyCond       *sync.Cond
-	applyCh         chan ApplyMsg
+	state             State       // rf当前的状态
+	heartbeatTimer    *time.Timer // 心跳timer
+	electionTimeout   *time.Timer // 超时选举 timer
+	currentTerm       int         //当前的任期
+	votedFor          int         // 投票给了哪个节点
+	logs              []LogEntry  // 日志
+	nextIndex         []int       // 要传给节点的下一个index
+	matchIndex        []int       // 节点已经匹配的index
+	commitIndex       int         // 已经提交的index
+	lastApplied       int         //  已经返回给客户端的index
+	applyCond         *sync.Cond
+	applyCh           chan ApplyMsg
+	lastIncludedIndex int
+	lastIncludedTerm  int
 }
 
 type LogEntry struct {
@@ -102,7 +104,7 @@ func (rf *Raft) GetState() (int, bool) {
 	defer rf.mu.Unlock()
 
 	term = rf.currentTerm
-	isleader = rf.state == Leader
+	isleader = rf.state == LEADER
 	return term, isleader
 }
 
@@ -116,7 +118,16 @@ func (rf *Raft) reinitIndex() {
 			rf.matchIndex[peerId] = 0
 		}
 	}
+}
 
+func (rf *Raft) encodeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	raftstate := w.Bytes()
+	return raftstate
 }
 
 // save Raft's persistent state to stable storage,
@@ -126,18 +137,12 @@ func (rf *Raft) reinitIndex() {
 // second argument to persister.Save().
 // after you've implemented snapshots, pass the current snapshot
 // (or nil if there's not yet a snapshot).
-func (rf *Raft) persist() {
-	// Your code here (3C).
-	// Example:
-	// DPrintf("%v begin persist\n", rf)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.logs)
-	raftstate := w.Bytes()
-	rf.persister.Save(raftstate, nil)
-	DPrintf("%v Persist; len of log is %d\n", rf, len(rf.logs))
+func (rf *Raft) persist(snapshot []byte) {
+	raftstate := rf.encodeState()
+	if snapshot == nil {
+		snapshot = rf.persister.ReadSnapshot()
+	}
+	rf.persister.Save(raftstate, snapshot)
 }
 
 // restore previously persisted state.
@@ -149,8 +154,6 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (3C).
-	// Example:
 
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
@@ -166,6 +169,10 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.currentTerm = term
 	rf.votedFor = votedFor
 	rf.logs = logs
+	rf.lastIncludedIndex = rf.logs[0].Index
+	rf.lastIncludedTerm = rf.logs[0].Term
+	rf.lastApplied = rf.lastIncludedIndex
+	rf.commitIndex = rf.lastIncludedIndex
 }
 
 // the service says it has created a snapshot that has
@@ -174,7 +181,22 @@ func (rf *Raft) readPersist(data []byte) {
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (3D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if rf.killed() || index <= rf.lastIncludedIndex || index > rf.lastApplied {
+		return
+	}
+
+	newIndex := index - rf.lastIncludedIndex
+	rf.lastIncludedTerm = rf.logs[newIndex].Term
+	rf.lastIncludedIndex = index
+
+	logs := make([]LogEntry, len(rf.logs[newIndex+1:]))
+	copy(logs, rf.logs[newIndex+1:])
+
+	rf.logs = append([]LogEntry{{rf.lastIncludedIndex, rf.lastIncludedTerm, nil}}, logs...)
+	rf.persist(snapshot)
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -197,7 +219,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (3B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.state != Leader {
+	if rf.state != LEADER {
 		return index, term, false
 	}
 
@@ -205,18 +227,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index++
 	term = rf.currentTerm
 	rf.logs = append(rf.logs, LogEntry{Index: index, Term: term, Command: command})
-	rf.persist()
+	rf.persist(nil)
 
 	rf.matchIndex[rf.me] = index
 	rf.nextIndex[rf.me] = index + 1
-
-	// if command == 105 {
-	// 	fmt.Println()
-	// 	fmt.Printf("no: %d; get the ", rf.me)
-	// 	// fmt.Println(command)
-	// 	fmt.Println(rf.logs)
-	// 	fmt.Println()
-	// }
 
 	go rf.requestAppendEntries()
 
@@ -244,13 +258,10 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
-
-		// Your code here (3A)
-		// Check if a leader election should be started.
 		select {
 		case <-rf.electionTimeout.C:
 			rf.mu.Lock()
-			if rf.state != Leader {
+			if rf.state != LEADER {
 				rf.mu.Unlock()
 				rf.startElection()
 				rf.resetElectionTimer()
@@ -259,7 +270,8 @@ func (rf *Raft) ticker() {
 			}
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
-			if rf.state == Leader {
+			if rf.state == LEADER {
+				DPrintf("S%d heartbeat Time Out\n", rf.me)
 				rf.requestAppendEntries()
 				rf.resetHeartBeatTimer()
 			}
@@ -270,14 +282,13 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) resetHeartBeatTimer() {
 
-	if !rf.electionTimeout.Stop() {
+	if !rf.heartbeatTimer.Stop() {
 		select {
 		case <-rf.heartbeatTimer.C:
 		default:
 		}
 	}
-
-	rf.heartbeatTimer.Reset(HeartBeatTime)
+	rf.heartbeatTimer.Reset(HEARTBEATTIME)
 }
 
 func (rf *Raft) resetElectionTimer() {
@@ -288,7 +299,6 @@ func (rf *Raft) resetElectionTimer() {
 		default:
 		}
 	}
-
 	rf.electionTimeout.Reset(resetElectionTimeout())
 }
 
@@ -304,23 +314,26 @@ func (rf *Raft) resetElectionTimer() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		peers:           peers,
-		persister:       persister,
-		me:              me,
-		state:           Follower,
-		heartbeatTimer:  time.NewTimer(HeartBeatTime),
-		currentTerm:     0,
-		votedFor:        -1,
-		electionTimeout: time.NewTimer(resetElectionTimeout()),
-		logs:            []LogEntry{{Index: 0, Term: 0, Command: nil}},
-		nextIndex:       make([]int, len(peers)),
-		matchIndex:      make([]int, len(peers)),
-		commitIndex:     0,
-		lastApplied:     0,
-		applyCh:         applyCh,
+		peers:             peers,
+		persister:         persister,
+		me:                me,
+		state:             FOLLOWER,
+		heartbeatTimer:    time.NewTimer(HEARTBEATTIME),
+		currentTerm:       0,
+		votedFor:          -1,
+		electionTimeout:   time.NewTimer(resetElectionTimeout()),
+		logs:              []LogEntry{{Index: 0, Term: 0, Command: nil}},
+		nextIndex:         make([]int, len(peers)),
+		matchIndex:        make([]int, len(peers)),
+		commitIndex:       0,
+		lastApplied:       0,
+		applyCh:           applyCh,
+		lastIncludedIndex: 0,
+		lastIncludedTerm:  0,
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
 	rf.readPersist(persister.ReadRaftState())
+	log.SetFlags(log.Ltime | log.Lmicroseconds)
 
 	// Your initialization code here (3A, 3B, 3C).
 	go rf.applySubmit()

@@ -4,29 +4,11 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
 	"time"
 )
 
 // Debugging
 const Debug = false
-
-func LogToFile() {
-	logFile := "debug.log"
-	// 检查文件是否存在
-	if _, err := os.Stat(logFile); err == nil {
-		// 文件存在则删除
-		os.Remove(logFile)
-	}
-
-	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatalf("failed to open log file: %v", err)
-	}
-
-	// 将标准 logger 的输出重定向到文件
-	log.SetOutput(f)
-}
 
 func DPrintf(format string, a ...interface{}) {
 	if Debug {
@@ -37,8 +19,8 @@ func DPrintf(format string, a ...interface{}) {
 func (rf *Raft) String() string {
 	state := [3]string{"Leader", "Follower", "Candidate"}
 	return fmt.Sprintf(
-		"[S%d | term=%d | state=%s | logLen=%d | commit=%d | lastApplied=%d | lastLogIndex=%d]",
-		rf.me, rf.currentTerm, state[rf.state], len(rf.logs), rf.commitIndex, rf.lastApplied, rf.logs[len(rf.logs)-1].Index,
+		"[S%d | term=%d | state=%s | lastLogIndex=%d | commit=%d | lastApplied=%d | lastIncludedIndex=%d | lastIncludedTerm=%d]",
+		rf.me, rf.currentTerm, state[rf.state], rf.logs[len(rf.logs)-1].Index, rf.commitIndex, rf.lastApplied, rf.lastIncludedIndex, rf.lastIncludedTerm,
 	)
 }
 
@@ -71,18 +53,17 @@ func min(a int, b int) int {
 }
 
 func (rf *Raft) changeState(state State) {
-	if state == Candidate {
-		rf.state = Candidate
+	if state == CANDIDATE {
+		rf.state = CANDIDATE
 		rf.currentTerm += 1
 		rf.votedFor = rf.me
-	} else if state == Follower {
-		rf.state = Follower
+	} else if state == FOLLOWER {
+		rf.state = FOLLOWER
 		rf.votedFor = -1
 		rf.resetElectionTimer()
 		rf.heartbeatTimer.Stop()
-
-	} else if state == Leader {
-		rf.state = Leader
+	} else if state == LEADER {
+		rf.state = LEADER
 		rf.resetHeartBeatTimer()
 		rf.electionTimeout.Stop()
 	}

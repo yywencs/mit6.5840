@@ -4,23 +4,6 @@ import (
 	"sort"
 )
 
-func (rf *Raft) sendAppendEntries(server int, args *AppendEnrtiesRequest, reply *AppendEnrtiesResponse) bool {
-	// done := make(chan bool, 1)
-
-	// go func() {
-	// 	done <- rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-	// }()
-
-	// select {
-	// case ok := <-done:
-	// 	return ok
-	// case <-time.After(RPC_TIMEOUT): // 例如100ms
-	// 	return false
-	// }
-	ok := rf.peers[server].Call("Raft.HandleAppendEntries", args, reply)
-	return ok
-}
-
 func (rf *Raft) requestAppendEntries() {
 	for peerId := range rf.peers {
 		if peerId == rf.me {
@@ -30,33 +13,37 @@ func (rf *Raft) requestAppendEntries() {
 		go func(peerId int) {
 			for {
 				rf.mu.Lock()
-				if rf.state != Leader {
+				if rf.state != LEADER {
 					rf.mu.Unlock()
 					return
 				}
 
 				next := rf.nextIndex[peerId]
 
-				if next == 1 {
-					DPrintf("peerId: %d, next Index=1, match Index=%d\n", peerId, rf.matchIndex[peerId])
-				}
+				// if next <= rf.matchIndex[peerId] {
+				// 	next = rf.matchIndex[peerId] + 1
+				// }
 
-				if next <= rf.matchIndex[peerId] {
+				DPrintf("S%d send append to S%d\n", rf.me, peerId)
+				if next <= rf.lastIncludedIndex {
 					rf.mu.Unlock()
+					rf.InstallSnapshot(peerId)
 					return
 				}
 
+				idx := next - rf.lastIncludedIndex
 				lastLogIndex, _ := rf.getLastLog()
 				containEntries := lastLogIndex >= next
 
-				entries := make([]LogEntry, len(rf.logs[next:]))
+				entries := make([]LogEntry, len(rf.logs[idx:]))
 				if containEntries {
-					copy(entries, rf.logs[next:])
+					copy(entries, rf.logs[idx:])
+					DPrintf("%v Send AppendEntries to S%d, next is %d, entries is %v\n", rf, peerId, next, entries)
 				}
 				prevLogIndex := next - 1
-				prevLogTerm := rf.logs[next-1].Term
-				args := AppendEnrtiesRequest{rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, entries, rf.commitIndex}
-				reply := AppendEnrtiesResponse{}
+				prevLogTerm := rf.logs[idx-1].Term
+				args := AppendEnrtiesArgs{rf.currentTerm, rf.me, prevLogIndex, prevLogTerm, entries, rf.commitIndex}
+				reply := AppendEnrtiesReply{}
 
 				rf.mu.Unlock()
 				if !rf.sendAppendEntries(peerId, &args, &reply) {
@@ -64,19 +51,16 @@ func (rf *Raft) requestAppendEntries() {
 				}
 
 				rf.mu.Lock()
-				DPrintf("%v Send AppendEntries to S%d, next is %d, entries is %v\n", rf, peerId, next, entries)
 
-				if args.Term != rf.currentTerm {
+				if args.Term != rf.currentTerm || rf.state != LEADER {
 					rf.mu.Unlock()
 					return
 				}
-				// fmt.Printf("Leader: %d; term: %d; args.term: %d; log is ", rf.me, rf.currentTerm, args.Term)
-				// fmt.Println(rf.logs)
 
 				if reply.Term > rf.currentTerm {
-					rf.changeState(Follower)
+					rf.changeState(FOLLOWER)
 					rf.currentTerm = reply.Term
-					rf.persist()
+					rf.persist(nil)
 					rf.mu.Unlock()
 					return
 				}
@@ -88,12 +72,10 @@ func (rf *Raft) requestAppendEntries() {
 						rf.nextIndex[peerId] = prevLogIndex + len(entries) + 1
 						indexArr := make([]int, len(rf.peers))
 						copy(indexArr, rf.matchIndex)
+						DPrintf("S%d: %v\n", rf.me, indexArr)
 						sort.Ints(indexArr)
-
 						newCommitIndex := indexArr[(len(indexArr)-1)/2]
-						// fmt.Println(indexArr)
-						// fmt.Println(rf.logs)
-						if newCommitIndex > rf.commitIndex && rf.logs[newCommitIndex].Term == rf.currentTerm {
+						if newCommitIndex > rf.commitIndex && rf.logs[newCommitIndex-rf.lastIncludedIndex].Term == rf.currentTerm {
 							rf.commitIndex = newCommitIndex
 							rf.applyCond.Signal()
 						}
@@ -119,7 +101,7 @@ func (rf *Raft) requestAppendEntries() {
 	}
 }
 
-func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnrtiesResponse) {
+func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesArgs, reply *AppendEnrtiesReply) {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -130,77 +112,73 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesRequest, reply *AppendEnr
 	reply.XIndex = -1
 	reply.Xlen = -1
 
-	if len(rf.logs) == 1 {
-		DPrintf("%v received AppendEntries from S%d (term=%d, prevLogIndex=%d, prevLogTerm=%d, entries=%d)\n",
-			rf, args.LeaderID, args.Term, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
-	}
-
 	if args.Term < rf.currentTerm {
-		if len(rf.logs) == 1 {
-			DPrintf("%v received AppendEntries from S%d 137 return\n", rf, args.LeaderID)
-		}
-
 		return
 	}
-	if args.Term == rf.currentTerm && rf.state == Candidate {
-		rf.changeState(Follower)
-		rf.persist()
+
+	rf.resetElectionTimer()
+	DPrintf("S%d Get HeartBeat from S%d\n", rf.me, args.LeaderID)
+
+	if args.Term == rf.currentTerm && rf.state == CANDIDATE {
+		rf.changeState(FOLLOWER)
+		rf.persist(nil)
 	}
 
 	if args.Term > rf.currentTerm {
-		rf.changeState(Follower)
+		rf.changeState(FOLLOWER)
 		rf.currentTerm = args.Term
-		rf.persist()
+		rf.persist(nil)
 		reply.Term = rf.currentTerm
 	}
-	rf.resetElectionTimer()
 
 	lastLogIndex, _ := rf.getLastLog()
 
 	if lastLogIndex < args.PrevLogIndex {
 		reply.XIndex = lastLogIndex + 1
-		if len(rf.logs) == 1 {
-			DPrintf("%v received AppendEntries from S%d 160 return, XIndex is %d\n", rf, args.LeaderID, reply.XIndex)
-		}
+		DPrintf("%v lastLogIndex < args.PrevLogIndex from S%d, return", rf, args.LeaderID)
 		return
 	}
 
-	if rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm {
-		reply.XTerm = rf.logs[args.PrevLogIndex].Term
-		for i := args.PrevLogIndex; i > 0; i-- {
+	idx := args.PrevLogIndex - rf.lastIncludedIndex
+	if idx > 0 && rf.logs[idx].Term != args.PrevLogTerm {
+		reply.XTerm = rf.logs[idx].Term
+		for i := idx; i > 0; i-- {
 			if rf.logs[i].Term != reply.XTerm {
 				reply.XIndex = rf.logs[i].Index
 				break
 			}
 		}
+		DPrintf("%v rf.logs[idx].Term != args.PrevLogTerm from S%d, return", rf, args.LeaderID)
 		return
 	}
 
 	if len(args.Entries) > 0 {
-		// DPrintf("%v, rf.logs: %v, entries: %v\n", rf, rf.logs, args.Entries)
+		// DPrintf("%v, idx: %d,rf.logs: %v, entries: %v\n", rf, idx, rf.logs, args.Entries)
 
-		i, j := args.PrevLogIndex+1, 0
+		i, j := idx+1, 0
+		if i < 0 {
+			i, j = 1, rf.lastIncludedIndex-args.PrevLogIndex
+		}
 		for i < len(rf.logs) && j < len(args.Entries) && rf.logs[i].Term == args.Entries[j].Term {
 			i += 1
 			j += 1
 		}
 		if j < len(args.Entries) {
-			rf.logs = append(rf.logs[:i], args.Entries[j:]...)
-			rf.persist()
-			// DPrintf("%v appends log entries: %v", rf, args.Entries[j:])
+			newLogs := make([]LogEntry, i+len(args.Entries[j:]))
+			copy(newLogs[:i], rf.logs[:i])
+			copy(newLogs[i:], args.Entries[j:])
+			rf.logs = newLogs
+			rf.persist(nil)
+			DPrintf("%v appends log entries: %v", rf, args.Entries[j:])
 		}
 
 	}
 
 	reply.Success = true
 
-	newCommitIndex := min(args.LeaderCommit, len(rf.logs)-1)
+	newCommitIndex := min(args.LeaderCommit, rf.logs[len(rf.logs)-1].Index)
 	if newCommitIndex > rf.commitIndex {
-		// DPrintf("Follower %d: newCommitIndex: %d; oldCommitIndex: %d; lastApplied: %d\n", rf.me, newCommitIndex, rf.commitIndex, rf.lastApplied)
 		rf.commitIndex = newCommitIndex
-		// state := [3]string{"Leader", "Follower", "Candidate"}
-		// fmt.Printf("[S%d | term=%d | state=%s | logLen=%d | commit=%d | lastApplied=%d] | lastLogIndex=%d\n",
-		// 	rf.me, rf.currentTerm, state[rf.state], len(rf.logs), rf.commitIndex, rf.lastApplied, rf.logs[len(rf.logs)-1].Index)
 		rf.applyCond.Signal()
 	}
 
@@ -210,13 +188,13 @@ func (rf *Raft) applySubmit() {
 
 	for !rf.killed() {
 		rf.mu.Lock()
-		for rf.commitIndex <= rf.lastApplied && !rf.killed() {
+		for rf.commitIndex <= rf.lastApplied {
 			rf.applyCond.Wait()
 		}
 		applyMsgs := []ApplyMsg{}
 
 		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
-			entry := rf.logs[i]
+			entry := rf.logs[i-rf.lastIncludedIndex]
 			applyMsg := ApplyMsg{
 				CommandValid: true,
 				Command:      entry.Command,
@@ -231,6 +209,12 @@ func (rf *Raft) applySubmit() {
 		rf.mu.Unlock()
 
 		for _, msg := range applyMsgs {
+			rf.mu.Lock()
+			if msg.CommandIndex <= rf.lastIncludedIndex {
+				rf.mu.Unlock()
+				continue
+			}
+			rf.mu.Unlock()
 			rf.applyCh <- msg
 		}
 	}
