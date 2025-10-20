@@ -11,7 +11,7 @@ func (rf *Raft) InstallSnapshot(peerId int) {
 	}
 	reply := SnapshotReply{}
 
-	DPrintf("%v send snapshot to S%d\n", rf, peerId)
+	DPrintf(dSnap, "%v send snapshot to S%d\n", rf, peerId)
 
 	rf.mu.Unlock()
 	if !rf.sendSnapshot(peerId, &args, &reply) {
@@ -20,7 +20,7 @@ func (rf *Raft) InstallSnapshot(peerId int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("S%d get reply from S%d\n", rf.me, peerId)
+	DPrintf(dSnap, "S%d get reply from S%d\n", rf.me, peerId)
 
 	if args.Term != rf.currentTerm || rf.state != LEADER {
 		return
@@ -58,7 +58,7 @@ func (rf *Raft) HandleSnapshot(args *SnapshotArgs, reply *SnapshotReply) {
 		return
 	}
 
-	DPrintf("%v HandleSnapshot, leaderID: %d, LastIncludedIndex: %d, LastIncludedTerm: %d\n", rf, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
+	DPrintf(dSnap, "%v HandleSnapshot, leaderID: %d, LastIncludedIndex: %d, LastIncludedTerm: %d\n", rf, args.LeaderId, args.LastIncludedIndex, args.LastIncludedTerm)
 	index := args.LastIncludedIndex - rf.lastIncludedIndex
 
 	if index < len(rf.logs) && rf.logs[index].Index == args.LastIncludedIndex && rf.logs[index].Term == args.LastIncludedTerm {

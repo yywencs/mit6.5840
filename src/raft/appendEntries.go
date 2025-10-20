@@ -24,7 +24,7 @@ func (rf *Raft) requestAppendEntries() {
 				// 	next = rf.matchIndex[peerId] + 1
 				// }
 
-				DPrintf("S%d send append to S%d\n", rf.me, peerId)
+				DPrintf(dAppend, "S%d send append to S%d\n", rf.me, peerId)
 				if next <= rf.lastIncludedIndex {
 					rf.mu.Unlock()
 					rf.InstallSnapshot(peerId)
@@ -38,7 +38,7 @@ func (rf *Raft) requestAppendEntries() {
 				entries := make([]LogEntry, len(rf.logs[idx:]))
 				if containEntries {
 					copy(entries, rf.logs[idx:])
-					DPrintf("%v Send AppendEntries to S%d, next is %d, entries is %v\n", rf, peerId, next, entries)
+					DPrintf(dAppend, "%v Send AppendEntries to S%d, next is %d, entries is %v\n", rf, peerId, next, entries)
 				}
 				prevLogIndex := next - 1
 				prevLogTerm := rf.logs[idx-1].Term
@@ -72,7 +72,7 @@ func (rf *Raft) requestAppendEntries() {
 						rf.nextIndex[peerId] = prevLogIndex + len(entries) + 1
 						indexArr := make([]int, len(rf.peers))
 						copy(indexArr, rf.matchIndex)
-						DPrintf("S%d: %v\n", rf.me, indexArr)
+						DPrintf(dAppend, "S%d: %v\n", rf.me, indexArr)
 						sort.Ints(indexArr)
 						newCommitIndex := indexArr[(len(indexArr)-1)/2]
 						if newCommitIndex > rf.commitIndex && rf.logs[newCommitIndex-rf.lastIncludedIndex].Term == rf.currentTerm {
@@ -117,7 +117,7 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesArgs, reply *AppendEnrtie
 	}
 
 	rf.resetElectionTimer()
-	DPrintf("S%d Get HeartBeat from S%d\n", rf.me, args.LeaderID)
+	DPrintf(dAppend, "S%d Get HeartBeat from S%d\n", rf.me, args.LeaderID)
 
 	if args.Term == rf.currentTerm && rf.state == CANDIDATE {
 		rf.changeState(FOLLOWER)
@@ -135,7 +135,7 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesArgs, reply *AppendEnrtie
 
 	if lastLogIndex < args.PrevLogIndex {
 		reply.XIndex = lastLogIndex + 1
-		DPrintf("%v lastLogIndex < args.PrevLogIndex from S%d, return", rf, args.LeaderID)
+		DPrintf(dAppend, "%v lastLogIndex < args.PrevLogIndex from S%d, return", rf, args.LeaderID)
 		return
 	}
 
@@ -148,12 +148,12 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesArgs, reply *AppendEnrtie
 				break
 			}
 		}
-		DPrintf("%v rf.logs[idx].Term != args.PrevLogTerm from S%d, return", rf, args.LeaderID)
+		DPrintf(dAppend, "%v rf.logs[idx].Term != args.PrevLogTerm from S%d, return", rf, args.LeaderID)
 		return
 	}
 
 	if len(args.Entries) > 0 {
-		// DPrintf("%v, idx: %d,rf.logs: %v, entries: %v\n", rf, idx, rf.logs, args.Entries)
+		DPrintf(dAppend, "%v, idx: %d,rf.logs: %v, entries: %v\n", rf, idx, rf.logs, args.Entries)
 
 		i, j := idx+1, 0
 		if i < 0 {
@@ -169,7 +169,7 @@ func (rf *Raft) HandleAppendEntries(args *AppendEnrtiesArgs, reply *AppendEnrtie
 			copy(newLogs[i:], args.Entries[j:])
 			rf.logs = newLogs
 			rf.persist(nil)
-			DPrintf("%v appends log entries: %v", rf, args.Entries[j:])
+			DPrintf(dAppend, "%v appends log entries: %v", rf, args.Entries[j:])
 		}
 
 	}
@@ -204,7 +204,7 @@ func (rf *Raft) applySubmit() {
 			rf.lastApplied += 1
 		}
 
-		DPrintf("%v applies log up to index=%d", rf, rf.lastApplied)
+		DPrintf(dCommit, "%v applies log up to index=%d", rf, rf.lastApplied)
 
 		rf.mu.Unlock()
 

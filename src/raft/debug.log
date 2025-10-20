@@ -1,16 +1,46 @@
 Test (3D): snapshots basic ...
-  ... Passed --   1.9  3  534  237642  232
-Test (3D): install snapshots (disconnect) ...
-  ... Passed --  29.0  3 1832  893546  308
-Test (3D): install snapshots (disconnect+unreliable) ...
-  ... Passed --  37.1  3 2166  847425  308
-Test (3D): install snapshots (crash) ...
-  ... Passed --  20.9  3 1499  778964  327
-Test (3D): install snapshots (unreliable+crash) ...
-  ... Passed --  25.4  3 1621  747603  314
-Test (3D): crash and restart all servers ...
-  ... Passed --   4.2  3  296   83686   60
-Test (3D): snapshot initialization after crash ...
-  ... Passed --   1.3  3   80   21544   14
+14:42:05.504859 TIMR   S0 Election Time Out
+14:42:05.506496 VOTE   [S0 | term=1 | state=Candidate | lastLogIndex=0 | commit=0 | lastApplied=0 | lastIncludedIndex=0 | lastIncludedTerm=0] starts election (lastLogIndex=0, lastLogTerm=0)
+14:42:05.508464 VOTE   S1 get RequestVote from S0, finish voted
+14:42:05.508490 VOTE   S2 get RequestVote from S0, finish voted
+14:42:05.509223 VOTE   [S0 | term=1 | state=Candidate | lastLogIndex=0 | commit=0 | lastApplied=0 | lastIncludedIndex=0 | lastIncludedTerm=0] get voted of 2
+14:42:05.509320 VOTE   [S0 | term=1 | state=Leader | lastLogIndex=0 | commit=0 | lastApplied=0 | lastIncludedIndex=0 | lastIncludedTerm=0] becomes LEADER
+14:42:05.509578 VOTE   [S0 | term=1 | state=Leader | lastLogIndex=0 | commit=0 | lastApplied=0 | lastIncludedIndex=0 | lastIncludedTerm=0] get voted of 3
+14:42:05.509713 VOTE   [S0 | term=1 | state=Leader | lastLogIndex=0 | commit=0 | lastApplied=0 | lastIncludedIndex=0 | lastIncludedTerm=0] becomes LEADER
+14:42:05.560660 TIMR   S0 heartbeat Time Out
+14:42:05.611421 TIMR   S0 heartbeat Time Out
+14:42:05.661948 TIMR   S0 heartbeat Time Out
+14:42:05.712263 TIMR   S0 heartbeat Time Out
+14:42:05.762472 TIMR   S0 heartbeat Time Out
+14:42:05.813641 TIMR   S0 heartbeat Time Out
+14:42:05.864038 TIMR   S0 heartbeat Time Out
+14:42:05.914415 TIMR   S0 heartbeat Time Out
+14:42:05.964570 TIMR   S0 heartbeat Time Out
+14:42:06.014760 TIMR   S0 heartbeat Time Out
+14:42:06.064999 TIMR   S0 heartbeat Time Out
+14:42:06.115210 TIMR   S0 heartbeat Time Out
+14:42:06.165351 TIMR   S0 heartbeat Time Out
+14:42:06.215950 TIMR   S0 heartbeat Time Out
+14:42:06.266365 TIMR   S0 heartbeat Time Out
+14:42:06.316679 TIMR   S0 heartbeat Time Out
+14:42:06.367213 TIMR   S0 heartbeat Time Out
+14:42:06.417348 TIMR   S0 heartbeat Time Out
+14:42:06.468305 TIMR   S0 heartbeat Time Out
+14:42:06.518533 TIMR   S0 heartbeat Time Out
+14:42:06.568681 TIMR   S0 heartbeat Time Out
+14:42:06.619850 TIMR   S0 heartbeat Time Out
+14:42:06.670262 TIMR   S0 heartbeat Time Out
+14:42:06.721323 TIMR   S0 heartbeat Time Out
+14:42:06.771951 TIMR   S0 heartbeat Time Out
+14:42:06.822691 TIMR   S0 heartbeat Time Out
+14:42:06.873739 TIMR   S0 heartbeat Time Out
+14:42:06.924851 TIMR   S0 heartbeat Time Out
+14:42:06.975072 TIMR   S0 heartbeat Time Out
+  ... Passed --   1.7  3  538  202193  237
 PASS
-ok  	6.5840/raft	119.754s
+14:42:07.026014 TIMR   S0 heartbeat Time Out
+14:42:07.170585 TIMR   S2 Election Time Out
+14:42:07.171198 VOTE   [S2 | term=2 | state=Candidate | lastLogIndex=237 | commit=237 | lastApplied=237 | lastIncludedIndex=229 | lastIncludedTerm=1] starts election (lastLogIndex=237, lastLogTerm=1)
+14:42:07.191920 TIMR   S1 Election Time Out
+14:42:07.192766 VOTE   [S1 | term=2 | state=Candidate | lastLogIndex=237 | commit=237 | lastApplied=237 | lastIncludedIndex=229 | lastIncludedTerm=1] starts election (lastLogIndex=237, lastLogTerm=1)
+ok  	6.5840/raft	2.727s

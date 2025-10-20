@@ -147,9 +147,9 @@ func (rf *Raft) persist(snapshot []byte) {
 
 // restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
-	DPrintf("readPersist\n")
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf(dPersist, "readPersist\n")
 	// DPrintf("readPersist\n")
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
@@ -165,7 +165,7 @@ func (rf *Raft) readPersist(data []byte) {
 		d.Decode(&logs) != nil {
 		return
 	}
-	DPrintf("%v load len of log is %d\n", rf, len(logs))
+	DPrintf(dPersist, "%v load len of log is %d\n", rf, len(logs))
 	rf.currentTerm = term
 	rf.votedFor = votedFor
 	rf.logs = logs
@@ -262,16 +262,17 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimeout.C:
 			rf.mu.Lock()
 			if rf.state != LEADER {
+				DPrintf(dTimer, "S%d Election Time Out\n", rf.me)
+				rf.resetElectionTimer()
 				rf.mu.Unlock()
 				rf.startElection()
-				rf.resetElectionTimer()
 			} else {
 				rf.mu.Unlock()
 			}
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == LEADER {
-				DPrintf("S%d heartbeat Time Out\n", rf.me)
+				DPrintf(dTimer, "S%d heartbeat Time Out\n", rf.me)
 				rf.requestAppendEntries()
 				rf.resetHeartBeatTimer()
 			}
@@ -332,6 +333,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		lastIncludedTerm:  0,
 	}
 	rf.applyCond = sync.NewCond(&rf.mu)
+
+	InitLogger()
+
 	rf.readPersist(persister.ReadRaftState())
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
 

@@ -4,14 +4,60 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 )
 
 // Debugging
-const Debug = false
+const Debug = true
 
-func DPrintf(format string, a ...interface{}) {
-	if Debug {
+type logTopic string
+
+const (
+	dClient  logTopic = "CLNT"
+	dCommit  logTopic = "CMIT"
+	dAppend  logTopic = "APPEND"
+	dError   logTopic = "ERRO"
+	dInfo    logTopic = "INFO"
+	dLeader  logTopic = "LEAD"
+	dLog     logTopic = "LOG1"
+	dLog2    logTopic = "LOG2"
+	dPersist logTopic = "PERS"
+	dSnap    logTopic = "SNAP"
+	dTerm    logTopic = "TERM"
+	dTest    logTopic = "TEST"
+	dTimer   logTopic = "TIMR"
+	dTrace   logTopic = "TRCE"
+	dVote    logTopic = "VOTE"
+	dWarn    logTopic = "WARN"
+)
+
+var (
+	debugFlags map[logTopic]bool
+	debugMu    sync.RWMutex
+)
+
+func InitLogger() {
+	debugMu.Lock()
+	defer debugMu.Unlock()
+	debugFlags = make(map[logTopic]bool)
+	var allLogTopics = []logTopic{
+		dClient, dCommit, dAppend, dError, dInfo, dLeader,
+		dLog, dLog2, dPersist, dSnap, dTerm, dTest,
+		dTimer, dTrace, dVote, dWarn,
+	}
+	for _, topic := range allLogTopics {
+		debugFlags[topic] = false
+	}
+	debugFlags[dTimer] = true
+	debugFlags[dVote] = true
+}
+
+func DPrintf(topic logTopic, format string, a ...interface{}) {
+	debugMu.RLock()
+	defer debugMu.RUnlock()
+	if debugFlags[topic] {
+		format = string(topic) + "   " + format
 		log.Printf(format, a...)
 	}
 }

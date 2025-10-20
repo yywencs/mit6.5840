@@ -1,5 +1,9 @@
 package raft
 
+import (
+	"sync"
+)
+
 func (rf *Raft) startElection() {
 	rf.mu.Lock()
 	rf.changeState(CANDIDATE)
@@ -12,10 +16,14 @@ func (rf *Raft) startElection() {
 		LastLogTerm:  lastLogTerm,
 	}
 	nPeers := len(rf.peers)
-	cnt := 1
-	DPrintf("%v starts election (lastLogIndex=%d, lastLogTerm=%d)",
+	DPrintf(dVote, "%v starts election (lastLogIndex=%d, lastLogTerm=%d)",
 		rf, lastLogIndex, lastLogTerm)
 	rf.mu.Unlock()
+
+	var mu sync.Mutex
+	mu.Lock()
+	cnt := 1
+	mu.Unlock()
 
 	for peerId := range rf.peers {
 		if peerId == rf.me {
@@ -41,15 +49,17 @@ func (rf *Raft) startElection() {
 				return
 			}
 
-			if reply.VoteGranted && rf.state == CANDIDATE {
+			if reply.VoteGranted {
+				mu.Lock()
 				cnt += 1
-				if cnt > nPeers/2 {
+				DPrintf(dVote, "%v get voted of %d\n", rf, cnt)
+				if cnt*2 > nPeers {
 					rf.changeState(LEADER)
 					rf.reinitIndex()
-					DPrintf("%v becomes LEADER", rf)
+					DPrintf(dVote, "%v becomes LEADER", rf)
 					rf.requestAppendEntries()
-					return
 				}
+				mu.Unlock()
 			}
 		}(peerId)
 	}
@@ -63,9 +73,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	DPrintf("S%d get RequestVote from S%d\n", rf.me, args.CandidateId)
-
 	if args.Term < rf.currentTerm {
+		DPrintf(dVote, "S%d get RequestVote from S%d, but args.Term < rf.currentTerm\n", rf.me, args.CandidateId)
 		return
 	}
 
@@ -78,42 +87,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	lastLogIndex, lastLogTerm := rf.getLastLog()
 	if (args.LastLogTerm < lastLogTerm) || (args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex) {
+		DPrintf(dVote, "S%d get RequestVote from S%d, but lastLogIndex not eligible\n", rf.me, args.CandidateId)
 		return
 	}
 
 	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		DPrintf(dVote, "S%d get RequestVote from S%d, finish voted\n", rf.me, args.CandidateId)
 		rf.votedFor = args.CandidateId
 		rf.persist(nil)
 		reply.VoteGranted = true
 		rf.resetElectionTimer()
+	} else {
+		DPrintf(dVote, "S%d get RequestVote from S%d, but have voted to %d\n", rf.me, args.CandidateId, rf.votedFor)
 	}
-
 }
-
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-
-// look at the comments in ../labrpc/labrpc.go for more details.
-
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
