@@ -1,12 +1,14 @@
 package kvraft
 
 import (
-	"6.5840/labgob"
-	"6.5840/labrpc"
-	"6.5840/raft"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
+
+	"6.5840/labgob"
+	"6.5840/labrpc"
+	"6.5840/raft"
 )
 
 const Debug = false
@@ -16,13 +18,6 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 		log.Printf(format, a...)
 	}
 	return
-}
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
 }
 
 type KVServer struct {
@@ -35,19 +30,46 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	lastCommand map[int64]int
+	data        map[string]string
+	waitCh      map[int64]chan interface{}
 }
-
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	command := Op{
+		OpType:    GetOp,
+		Key:       args.Key,
+		ClientId:  args.ClientId,
+		CommandId: args.CommandId,
+	}
+
+	reply.Err, reply.Value = kv.waitForSubmit(&command)
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+	command := Op{
+		OpType:    PutOp,
+		Key:       args.Key,
+		Value:     args.Value,
+		ClientId:  args.ClientId,
+		CommandId: args.CommandId,
+	}
+	fmt.Println("Put of Server, ", args)
+	reply.Err, _ = kv.waitForSubmit(&command)
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	command := Op{
+		OpType:    AppendOp,
+		Key:       args.Key,
+		Value:     args.Value,
+		ClientId:  args.ClientId,
+		CommandId: args.CommandId,
+	}
+	fmt.Println("Append of Server, ", args)
+	reply.Err, _ = kv.waitForSubmit(&command)
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -94,7 +116,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.data = make(map[string]string)
+	kv.waitCh = make(map[int64]chan interface{})
+	kv.lastCommand = make(map[int64]int)
 
+	go kv.recivedApplyChan()
+	go kv.sendNoOp()
 	// You may need initialization code here.
 
 	return kv
